@@ -1,0 +1,244 @@
+---
+title: "Geospatial Risk Modeling"
+author: "Jenna Epstein"
+date: "10/19/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+
+library(tidyverse)
+library(sf)
+library(RSocrata)
+library(viridis)
+#library(spatstat)
+library(raster)
+library(spdep)
+library(FNN)
+library(grid)
+library(gridExtra)
+library(knitr)
+library(kableExtra)
+library(tidycensus)
+
+# functions
+#root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
+```
+
+```{r palettes}
+mapTheme <- function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 14,colour = "black"),
+    plot.subtitle=element_text(face="italic"),
+    plot.caption=element_text(hjust=0),
+    axis.ticks = element_blank(),
+    panel.background = element_blank(),axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2),
+    strip.text.x = element_text(size = 14))
+}
+
+plotTheme <- function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 14,colour = "black"),
+    plot.subtitle = element_text(face="italic"),
+    plot.caption = element_text(hjust=0),
+    axis.ticks = element_blank(),
+    panel.background = element_blank(),
+    panel.grid.major = element_line("grey80", size = 0.1),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2),
+    strip.background = element_rect(fill = "grey80", color = "white"),
+    strip.text = element_text(size=12),
+    axis.title = element_text(size=12),
+    axis.text = element_text(size=10),
+    plot.background = element_blank(),
+    legend.background = element_blank(),
+    legend.title = element_text(colour = "black", face = "italic"),
+    legend.text = element_text(colour = "black", face = "italic"),
+    strip.text.x = element_text(size = 14)
+  )
+}
+qBr <- function(df, variable, rnd) {
+  if (missing(rnd)) {
+    as.character(quantile(round(df[[variable]],0),
+                          c(.01,.2,.4,.6,.8), na.rm=T))
+  } else if (rnd == FALSE | rnd == F) {
+    as.character(formatC(quantile(df[[variable]]), digits = 3),
+                 c(.01,.2,.4,.6,.8), na.rm=T)
+  }
+}
+
+q5 <- function(variable) {as.factor(ntile(variable, 5))}
+
+# Load hexadecimal color palette
+# Discrete from YlGnBu colorbrewer palette
+# This way also the lightest is yellow, won't get confused with NA
+palette5.YlGnBu <- c("#ffffcc","#a1dab4","#41b6c4","#2c7fb8","#253494")
+
+# Palette of two colors for TOD and Non-TOD, similar to what we used in lab.
+paletteTOD <- c("#fdb863", "#80cdc1")
+```
+
+
+## Read in Data from DC
+
+```{r read data}
+
+policeSectors <- 
+  st_read("https://opendata.arcgis.com/datasets/6ac17c2ff8cc4e20b3768dd1b98adf7a_23.geojson") %>%
+  st_transform('ESRI:102685') %>%
+  dplyr::select(Area = SECTOR)
+  
+policeServiceAreas <- 
+  st_read("https://opendata.arcgis.com/datasets/db24f3b7de994501aea97ce05a50547e_10.geojson") %>%
+  st_transform('ESRI:102685') %>%
+  dplyr::select(Area = NAME)
+
+bothPoliceUnits <- rbind(mutate(policeSectors, Legend = "Police Sectors"), 
+                         mutate(policeServiceAreas, Legend = "Police Service Areas"))
+
+theftsFromAuto <- 
+  st_read("https://opendata.arcgis.com/datasets/f08294e5286141c293e9202fcd3e8b57_1.geojson") %>% 
+    filter(OFFENSE == "THEFT F/AUTO") %>%
+    mutate(X = as.numeric(LONGITUDE),Y = as.numeric(LATITUDE)) %>% 
+    filter(!is.na(X)) %>%
+    filter(!is.na(Y)) %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant")%>%
+    st_transform('ESRI:102685') %>% 
+    distinct()
+
+boundaryDC <-
+  st_read("https://opendata.arcgis.com/datasets/7241f6d500b44288ad983f0942b39663_10.geojson") %>%
+  st_transform('ESRI:102685')
+
+```
+
+## Visualizing point data
+```{r fig.width=9, fig.height=5}
+# uses grid.arrange to organize independent plots
+grid.arrange(ncol=2,
+ggplot() + 
+  geom_sf(data = boundaryDC) +
+  geom_sf(data = theftsFromAuto, colour="red", size=0.1, show.legend = "point") +
+  labs(title= "Theft from Motor Vehicles, 2019",
+       subtitle="Washington, DC") +
+  mapTheme(),
+
+ggplot() + 
+  geom_sf(data = boundaryDC, fill = "grey40") +
+  stat_density2d(data = data.frame(st_coordinates(theftsFromAuto)), 
+                 aes(X, Y, fill = ..level.., alpha = ..level..),
+                 size = 0.01, bins = 50, geom = 'polygon') +
+  scale_fill_viridis() +
+  scale_alpha(range = c(0.00, 0.35), guide = FALSE) +
+  labs(title = "Density of Thefts from Motor Vehicles, 2019",
+       subtitle = "Washington, DC") +
+  mapTheme() + theme(legend.position = "none"))
+
+```
+
+## Creating a fishnet grid
+```{r fishnet grid}
+fishnet <- 
+  st_make_grid(boundaryDC,
+               cellsize = 500, 
+               square = TRUE) %>%
+  .[boundaryDC] %>% 
+  st_sf() %>%
+  mutate(uniqueID = rownames(.))
+```
+
+### Aggregate points to the fishnet
+
+> How can we aggregate points into a fishnet grid?
+
+```{r}
+## add a value of 1 to each crime, sum them with aggregate
+theftsFromAuto_net <- 
+  dplyr::select(theftsFromAuto) %>% 
+  mutate(count_theftsFromAuto = 1) %>% 
+  aggregate(., fishnet, sum) %>%
+  mutate(count_theftsFromAuto = replace_na(count_theftsFromAuto, 0),
+         uniqueID = rownames(.),
+         cvID = sample(round(nrow(fishnet) / 24), 
+                       size=nrow(fishnet), replace = TRUE))
+
+ggplot() +
+  geom_sf(data = theftsFromAuto_net, aes(fill = count_theftsFromAuto), color = NA) +
+  scale_fill_viridis() +
+  labs(title = "Count of Theft Auto Incidents for the Fishnet") +
+  mapTheme()
+```
+
+## Wrangling Risk Factors
+```{r data wrangling risk factors - abandoned cars}
+## using 311 dataset for all requests in DC in 2019
+abandonedCars <- 
+  st_read("https://opendata.arcgis.com/datasets/98b7406def094fa59838f14beb1b8c81_10.geojson") %>%
+  filter(SERVICECODEDESCRIPTION == "Abandoned Vehicle - On Public Property") %>%  
+  dplyr::select(Y = LATITUDE, X = LONGITUDE) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
+    st_transform(st_crs(fishnet)) %>%
+    mutate(Legend = "Abandoned_Cars")
+
+```
+
+```{r data wrangling risk factors - graffiti removal}
+## using 311 dataset for all requests in DC in 2019
+graffiti <- 
+  st_read("https://opendata.arcgis.com/datasets/98b7406def094fa59838f14beb1b8c81_10.geojson") %>%
+  filter(SERVICECODEDESCRIPTION == "Graffiti Removal") %>%  
+  dplyr::select(Y = LATITUDE, X = LONGITUDE) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
+    st_transform(st_crs(fishnet)) %>%
+    mutate(Legend = "Graffiti Removal")
+
+```
+
+```{r data wrangling risk factors - sanitation enforcement}
+## using 311 dataset for all requests in DC in 2019
+sanitationEnf <- 
+  st_read("https://opendata.arcgis.com/datasets/98b7406def094fa59838f14beb1b8c81_10.geojson") %>%
+  filter(SERVICECODEDESCRIPTION == "Sanitation Enforcement") %>%  
+  dplyr::select(Y = LATITUDE, X = LONGITUDE) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
+    st_transform(st_crs(fishnet)) %>%
+    mutate(Legend = "Sanitation Enforcement")
+
+```
+
+```{r data wrangling risk factors - parking enforcement}
+## using 311 dataset for all requests in DC in 2019
+parkingEnf <- 
+  st_read("https://opendata.arcgis.com/datasets/98b7406def094fa59838f14beb1b8c81_10.geojson") %>%
+  filter(SERVICECODEDESCRIPTION == "Parking Enforcement") %>%  
+  dplyr::select(Y = LATITUDE, X = LONGITUDE) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
+    st_transform(st_crs(fishnet)) %>%
+    mutate(Legend = "Parking Enforcement")
+
+```
+
+```{r data wrangling risk factors - vacant public property lots}
+## using 311 dataset for all requests in DC in 2019
+vacantLots <- 
+  st_read("https://opendata.arcgis.com/datasets/98b7406def094fa59838f14beb1b8c81_10.geojson") %>%
+  filter(SERVICECODEDESCRIPTION == "Sanitation Enforcement") %>%  
+  dplyr::select(Y = LATITUDE, X = LONGITUDE) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
+    st_transform(st_crs(fishnet)) %>%
+    mutate(Legend = "Sanitation Enforcement")
+
+```
