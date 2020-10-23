@@ -1,10 +1,17 @@
 ---
-title: "Geospatial Risk Modeling: Thefts from Automobiles in Washington, DC"
+title: "Geospatial Risk Modeling: Theft from Automobiles in Washington, DC"
 author: "Jenna Epstein"
 date: "10/23/2020"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
 ---
 # Setup
+
+To setup, I load libraries, include functions, and define plot and map themes.
+
 ```{r setup, include=FALSE, message=FALSE, warning=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
 
@@ -24,7 +31,6 @@ library(tidycensus)
 library(mapview)
 
 # functions
-#root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
 
 nn_function <- function(measureFrom,measureTo,k) {
   measureFrom_Matrix <-
@@ -131,29 +137,29 @@ q5 <- function(variable) {as.factor(ntile(variable, 5))}
 
 ```
 
+# Introduction
+With advances in technology and data science in the public sector, there is increased demand for tools to help increase efficiency across government agencies. This is particularly evident in law enforcement in the United States, where “predictive policing” machine learning algorithms dominate the conversation. These tools use data to forecast crime, influence sentencing decisions, and control resource allocation and deployment. However, given the country's deep-rooted systemic racism, the question of equity comes to the forefront. 
+ 
+In the era of Black Lives Matter, calls for equitable policing are only getting louder, and there is widespread critique around using machine learning for government decision-making. There are concerns that these tools lead to over-policing and misallocated resources by disproportionately targeting certain areas based on racial or socioeconomic status, further exacerbating systemic problems and reinforcing bias. Furthermore, the outsourcing of machine learning software to private companies obscures what is going on behind the scenes, as the “black box” of proprietary algorithms inhibits transparency. 
+
+In light of these challenges, is it possible for predictive modeling to be used to increase operational efficiency without exacerbating bias? What role can open source risk modeling play in moving the needle towards ethical and equitable decision-making? This exploration seeks to answer these questions through the creation of a geospatial risk model that optimizes for accuracy and generalizability for theft from automobile incidents in Washington, DC.
+
+It is important to acknowledge that despite good intentions, there will still be some degree of bias in the risk predictions generated here. This is in large part due to unobserved information, especially for the outcome variable. The selection bias associated with theft from auto crime is discussed below.
 
 # Data Wrangling
 
 ## Outcome Variable: Thefts from Automobiles
 
-Text here.
+Model development assumes that crime risk is a function of exposure to risk factors: as exposure to these factors increases, crime risk increases. In this case, the outcome variable - the dependent variable - is theft from automobiles (referred to as “theft from auto” for the remainder of this document). This data comes from the city’s open data portal (opendatadc.gov).
 
-```{r read data}
+The Metropolitan Police Department of Washington, DC (MPD) defines theft from auto as the theft of valuables from the inside of an automobile. For more information, please visit https://mpdc.dc.gov/page/thefts-autos. A type of property crime, theft from auto is one of the most common types of theft in DC.
 
-#DC police boundary data
-policeSectors <- 
-  st_read("https://opendata.arcgis.com/datasets/6ac17c2ff8cc4e20b3768dd1b98adf7a_23.geojson") %>%
-  st_transform('ESRI:102685') %>%
-  dplyr::select(Area = SECTOR)
-  
-policeServiceAreas <- 
-  st_read("https://opendata.arcgis.com/datasets/db24f3b7de994501aea97ce05a50547e_10.geojson") %>%
-  st_transform('ESRI:102685') %>%
-  dplyr::select(Area = NAME)
+This type of crime likely suffers from selection bias for a number of reasons. First, the people who are less likely to report thefts are those who do not want to contact law enforcement. This is particularly relevant in America today, where instances of police brutality against the Black community are becoming increasingly more visible. Given the state of systemic racism, these individuals may be less likely to call upon police for assistance, for fear of being mistreated or raising unwarranted suspicions. Additionally, dependent on the magnitude of the crime, people may be less inclined to report petty theft compared to theft of valuable items. The inconsistency in reporting, as well as likely under-reporting, means that the dataset is not truly representative of all incidents. 
 
-bothPoliceUnits <- rbind(mutate(policeSectors, Legend = "Police Sectors"), 
-                         mutate(policeServiceAreas, Legend = "Police Service Areas"))
+The set of maps below illustrate all theft from auto incidents recorded in 2018, both shown by individual points (left) and by density (right). Both maps show that there is a concentration of this type of crime in the center and right-center of the city. There are also clearly pockets in other areas of the city, so it is not unique to a specific neighborhood. The role of neighborhoods in the spatial process will be explored when running regressions. Density of crime incidents will also be further explored later on using kernel density maps to compare traditional hotspot mapping to the model’s risk predictions for future crime.
 
+
+```{r read data, message=FALSE, warning=FALSE, results='hide'}
 #outcome variable
 theftsFromAuto <- 
   st_read("https://opendata.arcgis.com/datasets/38ba41dd74354563bce28a359b59324e_0.geojson") %>% 
@@ -170,16 +176,31 @@ boundaryDC <-
   st_read("https://opendata.arcgis.com/datasets/7241f6d500b44288ad983f0942b39663_10.geojson") %>%
   st_transform('ESRI:102685')
 
+#DC police boundary data - not used in this version of the model, but keeping for reference
+policeSectors <- 
+  st_read("https://opendata.arcgis.com/datasets/6ac17c2ff8cc4e20b3768dd1b98adf7a_23.geojson") %>%
+  st_transform('ESRI:102685') %>%
+  dplyr::select(Area = SECTOR)
+  
+policeServiceAreas <- 
+  st_read("https://opendata.arcgis.com/datasets/db24f3b7de994501aea97ce05a50547e_10.geojson") %>%
+  st_transform('ESRI:102685') %>%
+  dplyr::select(Area = NAME)
+
+bothPoliceUnits <- rbind(mutate(policeSectors, Legend = "Police Sectors"), 
+                         mutate(policeServiceAreas, Legend = "Police Service Areas"))
+
 ```
 
-```{r fig.width=9, fig.height=5}
+```{r fig.height=5, fig.width=9, message=FALSE, warning=FALSE, results='hide'}
 # uses grid.arrange to organize independent plots
 grid.arrange(ncol=2,
 ggplot() + 
   geom_sf(data = boundaryDC) +
-  geom_sf(data = theftsFromAuto, colour="black", size=0.1, show.legend = "point") +
-  labs(title= "Theft from Motor Vehicles, 2018",
-       subtitle="Washington, DC") +
+  geom_sf(data = theftsFromAuto, colour="blue", size=0.1, show.legend = "point") +
+  labs(title= "Incidents of Theft from Auto, 2018",
+       subtitle="Washington, DC",
+       caption="Data: opendataDC.gov") +
   mapTheme(),
 
 ggplot() + 
@@ -189,15 +210,16 @@ ggplot() +
                  size = 0.01, bins = 50, geom = 'polygon') +
   scale_fill_viridis() +
   scale_alpha(range = c(0.00, 0.35), guide = FALSE) +
-  labs(title = "Density of Thefts from Motor Vehicles, 2018",
-       subtitle = "Washington, DC") +
+  labs(title = "Density: Incidents of Theft from Auto, 2018",
+       subtitle = "Washington, DC",
+       caption="Data: opendataDC.gov") +
   mapTheme() + theme(legend.position = "none"))
 
 ```
 
-Text here about joining incidents to the fishnet grid.
+Crime risk is not dependent on distinct municipal boundaries, so the city is divided up into a "fishnet" of grid cells, each 500 feet by 500 feet. After obtaining the count of theft by auto incidents for each of the grid cells, the data is aggregated to the fishnet by taking the sum of the counts per cell. This is visualized in the map below.
 
-```{r fishnet grid, message=FALSE, warning=FALSE}
+```{r fishnet grid, message=FALSE, warning=FALSE, results='hide'}
 fishnet <- 
   st_make_grid(boundaryDC,
                cellsize = 500, 
@@ -207,7 +229,7 @@ fishnet <-
   mutate(uniqueID = rownames(.))
 ```
 
-```{r aggregate points into fishnet grid, message=FALSE, warning=FALSE}
+```{r aggregate points into fishnet grid, message=FALSE, warning=FALSE, results='hide'}
 ## add a value of 1 to each crime, sum them with aggregate
 theftsFromAuto_net <- 
   dplyr::select(theftsFromAuto) %>% 
@@ -221,25 +243,44 @@ theftsFromAuto_net <-
 ggplot() +
   geom_sf(data = theftsFromAuto_net, aes(fill = count_theftsFromAuto), color = NA) +
   scale_fill_viridis() +
-  labs(title = "Count of Theft Auto Incidents for the Fishnet") +
+  labs(title = "Count of Theft by Auto Incidents for the Fishnet") +
   mapTheme()
 ```
 
 ## Risk Factors
 
-Text here all about the risk factors chosen to help with predictions.
-Also reading in the neighborhood data at this point.
+While the MPD warns about the risk of theft by auto in areas near bars and restaurants and large venues, there are other risk factors to explore when developing a predictive model. I read in data from opendatadc.gov to create a series of risk factor features. Seven out of eight of these variables come from the 2018 dataset of 311 reports; the liquor stores variable comes from a separate dataset housing point data for locations of liquor licenses in the city, filtered to only include stores. While other features were explored in the iterative model building process (including measuring distance to specific point locations of interest), ultimately a set of eight risk factors were best suited for the model: 
 
-```{r data wrangling risk factors}
-## using 311 dataset for all requests in DC in 2018
+* **Abandoned Cars:** reports of abandoned vehicles on both public and private property
+* **Alley Cleaning:** reports of alleys in need of cleaning
+* **Graffiti:** reports of graffiti in need of removal
+* **Liquor Stores:** locations of stores with liquor licenses that sell liquor
+* **Parking Enforcement:** reports of parking violations
+* **Sanitation Enforcement:** reports of improper disposal of trash
+* **Street Light Repair:** reports of malfunctioning street lights
+* **Vacant Lots:** reports of vacant lots
+
+A neighborhoods dataset - a polygon layer from opendatadc.gov - is also incorporated at this time. 
+
+```{r data wrangling risk factors, message=FALSE, warning=FALSE, results='hide'}
+## risk factors
 abandonedCars <- 
   st_read("https://opendata.arcgis.com/datasets/2a46f1f1aad04940b83e75e744eb3b09_9.geojson") %>%
-  filter(SERVICECODEDESCRIPTION == "Abandoned Vehicle - On Public Property") %>%  
+  filter(SERVICECODEDESCRIPTION %in% c("Abandoned Vehicle - On Public Property", "Abandoned Vehicle - On Private Property")) %>%
   dplyr::select(Y = LATITUDE, X = LONGITUDE) %>%
     na.omit() %>%
     st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
     st_transform(st_crs(fishnet)) %>%
-    mutate(Legend = "Abandoned_Cars")
+    mutate(Legend = "Abandoned Cars")
+
+alleyCleaning <- 
+  st_read("https://opendata.arcgis.com/datasets/2a46f1f1aad04940b83e75e744eb3b09_9.geojson") %>%
+  filter(SERVICECODEDESCRIPTION == "Alley Cleaning") %>% 
+  dplyr::select(Y = LATITUDE, X = LONGITUDE) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
+    st_transform(st_crs(fishnet)) %>%
+    mutate(Legend = "Alley Cleaning")
 
 graffiti <- 
   st_read("https://opendata.arcgis.com/datasets/2a46f1f1aad04940b83e75e744eb3b09_9.geojson") %>%
@@ -249,15 +290,6 @@ graffiti <-
     st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
     st_transform(st_crs(fishnet)) %>%
     mutate(Legend = "Graffiti")
-
-illegalDumping <- 
-  st_read("https://opendata.arcgis.com/datasets/2a46f1f1aad04940b83e75e744eb3b09_9.geojson") %>%
-  filter(SERVICECODEDESCRIPTION == "Illegal Dumping") %>%  
-  dplyr::select(Y = LATITUDE, X = LONGITUDE) %>%
-    na.omit() %>%
-    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
-    st_transform(st_crs(fishnet)) %>%
-    mutate(Legend = "Illegal Dumping")
 
 parkingEnf <- 
   st_read("https://opendata.arcgis.com/datasets/2a46f1f1aad04940b83e75e744eb3b09_9.geojson") %>%
@@ -277,14 +309,14 @@ sanitationEnf <-
     st_transform(st_crs(fishnet)) %>%
     mutate(Legend = "Sanitation Enforcement")
 
-streetlights <- 
+streetlightRepair <- 
   st_read("https://opendata.arcgis.com/datasets/2a46f1f1aad04940b83e75e744eb3b09_9.geojson") %>%
   filter(SERVICECODEDESCRIPTION == "Streetlight Repair Investigation") %>%  
   dplyr::select(Y = LATITUDE, X = LONGITUDE) %>%
     na.omit() %>%
     st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
     st_transform(st_crs(fishnet)) %>%
-    mutate(Legend = "Streetlight Repair Investigation")
+    mutate(Legend = "Street Light Repair")
 
 vacantLots <- 
   st_read("https://opendata.arcgis.com/datasets/2a46f1f1aad04940b83e75e744eb3b09_9.geojson") %>%
@@ -295,7 +327,6 @@ vacantLots <-
     st_transform(st_crs(fishnet)) %>%
     mutate(Legend = "Vacant Lots")
 
-## different open data dc dataset
 liquorStores <- 
   st_read("https://opendata.arcgis.com/datasets/cabe9dcef0b344518c7fae1a3def7de1_5.geojson") %>%
   filter(TYPE == "Retail - Liquor Store") %>%  
@@ -305,9 +336,6 @@ liquorStores <-
     st_transform(st_crs(fishnet)) %>%
     mutate(Legend = "Liquor Stores")
 
-```
-
-```{r neighborhoods}
 #Reading in DC Neighborhoods Spatial Data
 neighborhoods <- 
   st_read("https://opendata.arcgis.com/datasets/de63a68eb7674548ae0ac01867123f7e_13.geojson") %>%
@@ -319,12 +347,12 @@ neighborhoods <-
 # Feature Engineering
 
 ## Count of Risk Factors by Fishnet Grid Cell
-Text goes here.
+Now that the wrangling of the risk factors is complete, they are joined to the fishnet. The small multiple plot below illustrates how the features have different spatial processes. By visualizing these risk factors, it is clear that they have different spatial processes. For example, reports of graffiti are concentrated in the center of the city, whereas street lights in need of repair are distributed across many areas. 
 
-```{r aggregate features to fishnet, message=FALSE, warning=FALSE}
+```{r aggregate features to fishnet, fig.width=10, message=FALSE, warning=FALSE, results='hide'}
 ## Aggregating Risk Factors (Features) to the Fishnet Grid using Nearest Neighbor
 vars_net <- 
-rbind(abandonedCars, graffiti, sanitationEnf, parkingEnf, streetlights, vacantLots, illegalDumping, liquorStores) %>%
+rbind(abandonedCars, alleyCleaning, graffiti, parkingEnf, sanitationEnf, streetlightRepair, vacantLots, liquorStores) %>%
   st_join(., fishnet, join=st_within) %>%
   st_drop_geometry() %>%
   group_by(uniqueID, Legend) %>%
@@ -336,30 +364,32 @@ rbind(abandonedCars, graffiti, sanitationEnf, parkingEnf, streetlights, vacantLo
     na.omit() %>%
     ungroup()
 
-```
-
-```{r feature engineering - count of risk factors by grid cell, eval=FALSE, include=FALSE}
 vars_net.long <- 
   gather(vars_net, Variable, value, -geometry, -uniqueID)
 
-###plotting
-#vars <- unique(vars_net.long$Variable)
-#mapList <- list()
+#plotting
+vars <- unique(vars_net.long$Variable)
+mapList <- list()
 
-#for(i in vars){
-#  mapList[[i]] <- 
-#    ggplot() +
-#      geom_sf(data = filter(vars_net.long, Variable == i), aes(fill=value), colour=NA) +
-#      scale_fill_viridis(name="") +
-#      labs(title=i) +
-#      mapTheme()}
+for(i in vars){
+  mapList[[i]] <- 
+    ggplot() +
+      geom_sf(data = filter(vars_net.long, Variable == i), aes(fill=value), colour=NA) +
+      scale_fill_viridis(name="") +
+      labs(title=i) +
+      mapTheme()}
 
-#do.call(grid.arrange,c(mapList, ncol =3, top = "Risk Factors by Fishnet"))
+do.call(grid.arrange,c(mapList, ncol =4, top = "Risk Factors by Fishnet"))
+
 ```
 
-## Nearest Neighbor Features
 
-```{r feature engineering - nearest neighbor features}
+## Nearest Neighbor Features
+Another feature engineering approach is explored as an alternative to using grid cell count: calculating nearest neighbor distance. This approach takes the centroid of each cell and measures its distance to its three nearest neighbors of each risk factor variable category.
+
+This approach is chosen over the count by grid cells to better account for smoother exposure to risk factors across space. The small multiple plot below visualizes these nearest neighbor features.
+
+```{r feature engineering - nearest neighbor features, message=FALSE, warning=FALSE, results='hide'}
 st_c <- st_coordinates
 st_coid <- st_centroid
 
@@ -368,23 +398,23 @@ vars_net <-
     mutate(
       Abandoned_Cars.nn =
         nn_function(st_c(st_coid(vars_net)), st_c(abandonedCars),3),
+      Alley_Cleaning.nn =
+        nn_function(st_c(st_coid(vars_net)), st_c(alleyCleaning),3),
       Graffiti.nn =
         nn_function(st_c(st_coid(vars_net)), st_c(graffiti),3),
-      Illegal_Dumping.nn =
-        nn_function(st_c(st_coid(vars_net)), st_c(illegalDumping),3),
       Liquor_Retail.nn =
         nn_function(st_c(st_coid(vars_net)), st_c(liquorStores),3),
       Parking_Enforcement.nn =
         nn_function(st_c(st_coid(vars_net)), st_c(parkingEnf),3),
       Sanitation_Enforcement.nn =
         nn_function(st_c(st_coid(vars_net)), st_c(sanitationEnf),3),
-      Streetlight_Repair.nn =
-        nn_function(st_c(st_coid(vars_net)), st_c(streetlights),3),
+      Street_Light_Repair.nn =
+        nn_function(st_c(st_coid(vars_net)), st_c(streetlightRepair),3),
       Vacant_Lots.nn =
         nn_function(st_c(st_coid(vars_net)), st_c(vacantLots),3))
 ```
 
-```{r feature engineering - nearest neighbor features2, fig.width=10, message=FALSE, warning=FALSE}
+```{r feature engineering - nearest neighbor features2, fig.width=10, message=FALSE, warning=FALSE, results='hide'}
 vars_net.long.nn <- 
   dplyr::select(vars_net, ends_with(".nn")) %>%
     gather(Variable, value, -geometry)
@@ -400,11 +430,15 @@ for(i in vars){
       labs(title=i) +
       mapTheme()}
 
-do.call(grid.arrange,c(mapList, ncol = 3, top = "Nearest Neighbor Risk Factors by Fishnet Grid Cell"))
+do.call(grid.arrange,c(mapList, ncol = 4, top = "Nearest Neighbor Risk Factors by Fishnet Grid Cell"))
+
 ```
 
+
 ## Creating the Final Fishnet Grid
-```{r Feature Engineering - Create the final_net, message=FALSE, warning=FALSE}
+After selecting the nearest neighbor features approach for incorporating risk factors, a final fishnet is created that joins together the risk factors and the theft by auto incidents.
+
+```{r Feature Engineering - Create the final_net, message=FALSE, warning=FALSE, results='hide'}
 final_net <-
   left_join(theftsFromAuto_net, st_drop_geometry(vars_net), by="uniqueID") 
 
@@ -419,21 +453,17 @@ final_net <-
 
 ```
 
-# Exploring the Spatial Process of Theft from Automobiles
-Text goes here.
+# Exploring the Spatial Process of Theft from Auto Incidents
 
-## Local Moran's I
-Text goes here.
+## Local Moran's *I*
+The Local Moran's *I* statistic is calculated to explore local spatial autocorrelation of theft from auto incidents in Washington, DC. The statistic assumes that at at a given point, the count of incidents is randomly distributed. Essentially, it explores spatial clustering by measuring how similar locations are to their immediate neighbors. High Local Moran's *I* values indicate that there is evidence of local clustering.
 
-```{r local Morans I prep, message=FALSE, warning=FALSE}
+```{r local Morans I prep, message=FALSE, warning=FALSE, results='hide'}
 ## {spdep} to make polygon to neighborhoods
 final_net.nb <- poly2nb(as_Spatial(final_net), queen=TRUE)
 ## and neighborhoods to list of weights
 final_net.weights <- nb2listw(final_net.nb, style="W", zero.policy=TRUE)
 
-```
-
-```{r local Morans I, message=FALSE, warning=FALSE}
 final_net.localMorans <- 
   cbind(
     as.data.frame(localmoran(final_net$count_theftsFromAuto, final_net.weights)),
@@ -447,8 +477,12 @@ final_net.localMorans <-
 
 ```
 
-### Plotting Local Moran's I results
-```{r plotting local Morans I, message=FALSE, warning=FALSE}
+
+The results of the Local Moran's *I* are plotted below, alongside the count of incidents (on the far left). These three outputs mapped include the Local Moran's *I*, the p-value, and the significant hotspots (cells with higher local counts than expected).
+
+In the Local Moran's *I* map, evidence of spatial clustering exists especially in the center areas of the city, as evidenced by the higher values for cells (shown in green and yellow hues). The p-value and significant hotspots maps further support this notion of local clustering. 
+
+```{r plotting local Morans I, fig.width=10, message=FALSE, warning=FALSE, results='hide'}
 vars2 <- unique(final_net.localMorans$Variable)
 varList <- list()
 
@@ -465,10 +499,14 @@ do.call(grid.arrange,c(varList, ncol = 4, top = "Local Morans I statistics, Thef
 
 ```
 
-### Plotting Nearest Neighbor Distance to Hotspots
-The map below shows the distance to highly significant hotspots for thefts from automobiles. This is done by creating a local Moran's I feature in the final fishnet grid, using a dummy variable to indicate that a cell is part of a significant cluster, and then measuring measuring the average nearest neighbor distance from the centroid of each grid cell to its nearest significant cluster. A p-value of 0.0000001 was chosen Since the smaller the p-value, the more significant the clusters. After running some variations, the p-value chosen here is 0.0000001.
 
-```{r plotting distance to significant hotspots, message=FALSE, warning=FALSE}
+### Plotting Nearest Neighbor Distance to Hotspots
+
+In order to develop a model that generalizes well, it must predict well in the hotspots and in the not-so-hotspots. To control for spatial process, Local Moran's *I* is added as a feature in the final fishnet grid, using a dummy variable to indicate that a cell is part of a significant cluster. Then, the average nearest neighbor distance is measured from the centroid of each grid cell to its nearest significant cluster. The p-value chosen is 0.0000001 - the smaller the p-value, the more significant the clusters.
+
+The map below shows the distance to highly significant hotspots for thefts from automobiles.
+
+```{r plotting distance to significant hotspots, message=FALSE, warning=FALSE, results='hide'}
 # first, create a Local Moran's I feature in final_net
 final_net <-
   final_net %>% 
@@ -488,11 +526,11 @@ ggplot() +
       mapTheme()
 ```
 
+
 ## Correlation Tests
-The scatterplots below show the count and nearest neighbor correlations. When running the regressions later, it is best to pick either a count risk factor variable or a nearest neighbor risk factor variable - including both will lead to colinearity. Based on these tests, I select the nearest neighbor risk factors [ADD THE WHY]
+The Pearson R correlation is then calculated for each risk factor - both the count and nearest neighbor versions of each. The scatterplots below show the count and nearest neighbor correlations. When running the regressions later, it is best to pick either a count risk factor variable or a nearest neighbor risk factor variable - including both will lead to colinearity. Through iterative testing, I ultimately select the nearest neighbor risk factors to use in the model.
 
-```{r fig.height=12, message=FALSE, warning=FALSE}
-
+```{r correlation long, fig.height=12, fig.width=10, message=FALSE, warning=FALSE, results='hide'}
 correlation.long <-
   st_drop_geometry(final_net) %>%
     dplyr::select(-uniqueID, -cvID, -NAME, -Area) %>%
@@ -513,37 +551,44 @@ ggplot(correlation.long, aes(Value, count_theftsFromAuto)) +
   plotTheme()
 ```
 
-## Histogram of Outcome Variable
-In this histogram below showing distribution of thefts from automobiles, one can see that the majority of grid cells have 0 or 1 incident of this crime type, indicating that this crime type is relatively rare. Given this skewed distribution towards low frequency, an ordinary least squares (OLS) regression is not the best approach. Instead, a Poisson regression - a regression used in modeling an outcome variable consisting of count data - is more useful here.
 
-```{r histogram of outcome variable, message=FALSE, warning=FALSE}
+# Regressions
+
+## Histogram of the Outcome Variable
+In this histogram below showing distribution of thefts from auto incidents, a majority of grid cells have 0 or 1 incident of this crime type, indicating that theft from auto is a relatively rare crime event across the cells. Given this skewed distribution towards low frequency, an ordinary least squares (OLS) regression is not the best approach. Instead, a Poisson regression - a regression used in modeling an outcome variable consisting of count data - is more useful here.
+
+```{r histogram of outcome variable, message=FALSE, warning=FALSE, results='hide'}
 # histogram of outcome variable
 ggplot(final_net, aes(count_theftsFromAuto)) +
   geom_histogram(binwidth=1, color="grey40") +
   stat_bin(binwidth=1, geom="label", color="black", bins=6, aes(label=..count..), position=position_stack(vjust=0.9)) +
-  labs(title="Distribution of Thefts from Automobiles",
-       y="Count of Cells", x = "Count of Thefts From Automobiles") + plotTheme()
+  labs(title="Distribution of Thefts from Auto, by Fishnet Grid Cell",
+       y="Count of Cells", x = "Count of Thefts From Auto") + plotTheme()
 
 ```
 
-# Poisson Regression
-## Cross-validated Poisson Regression
 
-To train the predictive model, the "leave-one=group-out" spatial cross-validation approach (LOGO-CV) is used. By training the model on all areas except for one at a time - predicting the hold out and recording the goodness of fit for each - LOGO-CV rotates through and trains the model across various spatial scales.
+## Cross-validated Poisson Regressions
 
-Below, four regressions are run using the CrossValidate function, which incorporates the count_theftsFromAuto variable. Two regressions are run for risk factors ("reg.cv" and "reg.spatialCV", and two are run for risk factors including the spatial process features engineered previously using the local Moran's I ("reg.ss.cv" and reg.ss.spatialCV).
+To develop a model that will be generalizable, it needs to learn the risk of the theft by auto incidents across spatial scales - both city-wide and locally. This leads to the use of the "leave-one-group-out" spatial cross-validation approach (LOGO-CV). In this case, "groups" are the neighborhoods of DC. By training the model on all neighborhood except for one at a time - predicting the hold out and recording the goodness of fit for each - LOGO-CV rotates through and trains the model across various spatial scales.
 
-```{r message=FALSE, warning=FALSE}
+Below, four regressions are run using the CrossValidate function, which incorporates the count_theftsFromAuto variable. Two regressions are random k-fold cross-validation, and the other two use the LOGO-CV spatial cross-validation approach.
+
+* reg.cv: random k-fold cross validation using risk factors only
+* reg.ss.cv: random k-fold cross validation using the risk factors and spatial process features
+* reg.spatialCV: LOGO-CV spatial cross-validation on neighborhood, using the risk factors only
+* reg.ss.spatialCV: LOGO-CV spatial cross-validation on neighborhood, using risk factors and spatial process features
+
+
+```{r message=FALSE, warning=FALSE, results='hide'}
 # just risk factors (reg.vars)
-reg.vars <- c("Abandoned_Cars.nn", "Graffiti.nn", "Illegal_Dumping.nn", "Liquor_Retail.nn", "Parking_Enforcement.nn", "Sanitation_Enforcement.nn", "Streetlight_Repair.nn", "Vacant_Lots.nn")
-```
+reg.vars <- c("Abandoned_Cars.nn", "Alley_Cleaning.nn", "Graffiti.nn", "Liquor_Retail.nn", "Parking_Enforcement.nn", "Sanitation_Enforcement.nn", "Street_Light_Repair.nn", "Vacant_Lots.nn")
 
-```{r}
 ## risk factors plus local morans I spatial process features (reg.ss.vars)
-reg.ss.vars <- c("Abandoned_Cars.nn", "Graffiti.nn", "Illegal_Dumping.nn", "Liquor_Retail.nn", "Parking_Enforcement.nn", "Sanitation_Enforcement.nn", "Streetlight_Repair.nn", "Vacant_Lots.nn", "theftsFromAuto.isSig", "theftsFromAuto.isSig.dist")
+reg.ss.vars <- c("Abandoned_Cars.nn", "Alley_Cleaning.nn", "Graffiti.nn", "Liquor_Retail.nn", "Parking_Enforcement.nn", "Sanitation_Enforcement.nn", "Street_Light_Repair.nn", "Vacant_Lots.nn", "theftsFromAuto.isSig", "theftsFromAuto.isSig.dist")
 ```
 
-```{r message=FALSE, warning=FALSE}
+```{r message=FALSE, warning=FALSE, results='hide'}
 ## run regressions
 reg.cv <- crossValidate(
   dataset = final_net,
@@ -574,11 +619,14 @@ reg.ss.spatialCV <- crossValidate(
     dplyr::select(cvID = NAME, count_theftsFromAuto, Prediction, geometry)
 ```
 
-## Accuracy and Generalizability
 
-To test the accuracy and generalizability across space, I calculate the mean absolute error (MAE) for each fold for each of the regressions run. The set of histograms below show that the LOGO-CV regressions - both for just the risk factors and accounting for spatial process- reduce errors.
+# Accuracy and Generalizability
 
-```{r regression summary, message=FALSE, warning=FALSE}
+## Model Errors
+To test the accuracy and generalizability across space, I calculate the mean absolute error (MAE) for each fold for each of the regressions run. The small multiple plot of histograms below show that the LOGO-CV regressions - both for just the risk factors and accounting for spatial process - reduce errors compared to the random k-fold cross-validations.
+
+```{r regression summary, message=FALSE, warning=FALSE, results='hide'}
+# reg summary
 reg.summary <- 
   rbind(
     mutate(reg.cv,           Error = Prediction - count_theftsFromAuto,
@@ -595,7 +643,7 @@ reg.summary <-
     st_sf() 
 ```
 
-```{r calculate and plot errors, message=FALSE, warning=FALSE}
+```{r calculate and plot errors, fig.width=10, message=FALSE, warning=FALSE, results='hide'}
 # calculate errors
 error_by_reg_and_fold <- 
   reg.summary %>%
@@ -611,10 +659,29 @@ error_by_reg_and_fold %>%
     geom_histogram(bins = 30, colour="black", fill = "#FDE725FF") +
     facet_wrap(~Regression) +  
     geom_vline(xintercept = 0) + scale_x_continuous(breaks = seq(0, 8, by = 1)) + 
-    labs(title="Distribution of MAE", subtitle = "k-fold cross validation vs. LOGO-CV",
-         x="Mean Absolute Error", y="Count") 
+    labs(title="Distribution of Mean Absolute Error", subtitle = "k-fold cross validation vs. LOGO-CV",
+         x="Mean Absolute Error", y="Count")
 ```
-```{r message=FALSE, warning=FALSE}
+
+To visualize the errors of these regressions, the maps below show the spatial distributions of errors. Areas with higher errors indicate that there are local spatial processes that are unaccounted for in the model. In the Spatial LOGO-CV: Just Risk Factors map especially, it is evident that the largest errors are in the hotspot areas. Given that these areas experience more of the incidents than others, is it expected that these areas would have more errors. Since the results of the k-fold cross validations are difficult to decipher, the histogram above provides a better view of the distribution of errors.
+
+```{r calculate and plot errors map, fig.height=10, message=FALSE, warning=FALSE, results='hide'}
+error_by_reg_and_fold %>%
+  #filter(str_detect(Regression, "k-fold")) %>%
+  ggplot() +
+    geom_sf(aes(fill = MAE)) +
+    facet_wrap(~Regression) +
+    scale_fill_viridis() +
+    labs(title = "Model Errors, by Regression",
+         subtitle = "k-fold cross validation vs. LOGO-CV") +
+    mapTheme() + theme(legend.position="bottom") + theme(strip.text.x = element_text(size=9))
+```
+
+
+This table shows the MAE and standard deviation (SD) MAE for each of the four regressions. These results show that the inclusion of spatial process features improves the model (as shown by the smaller mean MAE and standard deviation MAE results). This confirms that accounting for spatial contexts in the model is useful. 
+
+```{r table MAE and SD MAE, message=FALSE, warning=FALSE, results='asis'}
+
 st_drop_geometry(error_by_reg_and_fold) %>%
   group_by(Regression) %>% 
     summarize(Mean_MAE = round(mean(MAE), 2),
@@ -622,19 +689,30 @@ st_drop_geometry(error_by_reg_and_fold) %>%
   kable(caption = "Mean Absolute Error, By Regression") %>%
     kable_styling("striped", full_width = F) %>%
     row_spec(2, color = "black", background = "#FDE725FF") %>%
-    row_spec(4, color = "black", background = "#FDE725FF") 
+    row_spec(4, color = "black", background = "#FDE725FF")
+
 ```
-```{r error by reg and fold, message=FALSE, warning=FALSE}
-error_by_reg_and_fold %>%
-  filter(str_detect(Regression, "LOGO")) %>%
-  ggplot() +
-    geom_sf(aes(fill = MAE)) +
+
+
+## Model Predictions
+The maps below show the predictions for the four regressions. With a smoother crime risk surface, these mapped predictions represent latent crime risk. This means that they show that areas are at risk, even if no incident was observed there.
+
+```{r prediction maps, fig.height=10, message=FALSE, warning=FALSE, results='hide'}
+#mapping predictions
+
+  reg.summary %>%
+  ggplot()+
+    geom_sf(aes(fill = Prediction)) +
     facet_wrap(~Regression) +
     scale_fill_viridis() +
-    labs(title = "Thefts from Auto Errors, by LOGO-CV Regression") +
-    mapTheme() + theme(legend.position="bottom")
+    labs(title = "Predicted Incidents of Theft by Auto, by Regression") +
+    mapTheme() + theme(legend.position="bottom") + theme(strip.text.x = element_text(size=9))
+
 ```
-```{r message=FALSE, warning=FALSE}
+
+Looking at just the Spatial Process features to further investigate their role in accounting for spaital variation, I calculate Moran's *I* on errors for the LOGO-CV regressions.
+```{r eval=FALSE, message=FALSE, warning=FALSE}
+#neighborhood weights
 neighborhood.weights <-
   filter(error_by_reg_and_fold, Regression == "Spatial LOGO-CV: Spatial Process") %>%
     group_by(cvID) %>%
@@ -650,8 +728,13 @@ filter(error_by_reg_and_fold, str_detect(Regression, "LOGO"))  %>%
               p_value = moran.mc(abs(Mean_Error), neighborhood.weights, 
                                  nsim = 999, zero.policy = TRUE, 
                                  na.action=na.omit)[[3]]) %>% kable() %>% kable_styling()
+
 ```
-```{r pred and observed, message=FALSE, warning=FALSE}
+
+
+The series of charts below illustrate both the predicted and observed incidents of theft by auto, by decile. The longer, taller lines with the open triangle (the symbol for meanObserved), demonstrate that all four regressions over-predict in areas with more theft from auto incidents. On the contrary, the segments where the filled triangles are above the open ones show that the tests under-predict.
+
+```{r pred and observed, message=FALSE, warning=FALSE, results='hide'}
 st_drop_geometry(reg.summary) %>%
   group_by(Regression) %>%
     mutate(theftsFromAuto_Decile = ntile(count_theftsFromAuto, 10)) %>%
@@ -663,18 +746,21 @@ st_drop_geometry(reg.summary) %>%
       geom_point(size = 2) + geom_path(aes(group = theftsFromAuto_Decile), colour = "black") +
       scale_shape_manual(values = c(2, 17)) +
       facet_wrap(~Regression) + xlim(0,10) +
-      labs(title = "Predicted and observed thefts by Auto by observed thefts by auto decile")
+      labs(title = "Predicted and Observed Thefts by Auto, by Observed Thefts by Auto Decile")
 ```
+
 
 # Generalizability by Neighborhood Context
 
-```{r tidycensus, message=FALSE, warning=FALSE}
+To test that the model generalizes across neighborhood contexts in DC, I bring in data from the U.S. Census Bureau's American Community Survey estimates. The most recent year available through the API is 2018, so I pull in data for population and race, by Census tract.
+
+```{r tidycensus, message=FALSE, warning=FALSE, results='hide'}
 
 census_api_key("41e1c0d912341017fa6f36a5da061d3b23de335e", overwrite = TRUE)
 
 tracts2018 <- 
-  get_acs(geography = "tract", variables = c("B01001_001E","B01001A_001E"), 
-          year = 2018, state=11, geometry=T) %>%
+  get_acs(geography = "tract", variables = c("B01001_001E", "B01001A_001E"), 
+          year = 2018, state=11,county=001, geometry=T) %>%
   st_transform('ESRI:102685')  %>% 
   dplyr::select(variable, estimate, GEOID) %>%
   spread(variable, estimate) %>%
@@ -685,8 +771,24 @@ tracts2018 <-
   .[neighborhoods,]
 
 ```
-```{r mean error by nhood racial context, message=FALSE, warning=FALSE}
-reg.summary %>% 
+
+
+Washington, DC is a very segregated city, as shown in the  map below. There is a visible divide that cuts north to south through the city along 16th street, with the census tracts on the left being majority white, and the ones on the left being majority non-white.
+
+```{r race context map, message=FALSE, warning=FALSE}
+ggplot()+ 
+      geom_sf(data = na.omit(tracts2018), aes(fill = raceContext)) +
+    scale_fill_manual(values = c("#25CB10", "#FA7800"), name="Race Context") +
+    labs(title = "Race Context", subtitle = "Washington, DC", caption="Data: US Census Bureau, ACS 2013-2017 Estimates \nNote: Excludes census tracts with no data")+
+    mapTheme() + theme(legend.position="right")
+```
+
+To calculate error in this context, observed count of theft by auto is subtracted from the prediction. The table below shows the mean error by neighborhood racial context. Based on the values, the model slightly under-predicts in majority-White areas (both in the LOGO-CV model using just risk factors, and the one incorporating spatial process). For the majority non-White areas, the just risk factors LOGO-CV model slightly over-predicts, as evidenced by the slightly positive value.  This slight over-prediction could lead to over-policing in majority non-White areas, which may further systemic bias. The LOGO-CV spatial process model, on the other hand, slightly under-predicts. 
+
+Overall, the model errors are lower when accounting for neighborhood racial context, and when bringing in the spatial process features, these errors are even lower. Especially in the majority-non-white context, slightly under-predicting is the best option in my opinion - if this model were to be used, it would not lead to unnecessary over-allocation of resources to areas with a large percentage of minorities.
+
+```{r mean error by nhood racial context, message=FALSE, results = 'asis'}
+ reg.summary %>% 
   filter(str_detect(Regression, "LOGO")) %>%
     st_centroid() %>%
     st_join(tracts2018) %>%
@@ -698,9 +800,13 @@ reg.summary %>%
       kable(caption = "Mean Error by neighborhood racial context") %>%
         kable_styling("striped", full_width = F) 
 ```
+
+
 ## Do Risk Predictions Outperform Kernel Density Hotspot Mapping?
 
-```{r kernal density, message=FALSE, warning=FALSE}
+This section looks at the risk predictions and compares their performance to more traditional kernel density hotspot mapping. Kernel density works by calculating the density of features based on the sum of all nearby "kernels" in a given area. The series of three maps below show kernel density for theft from auto incidents in 2018 at three different scales. It is important to keep in mind that this type of mapping can easily change the visual story of where "hotspots" are and what the magnitudes may be, based on what scale is chosen. In this way, predictions are based on spatial autocorrelation.
+
+```{r kernel density, message=FALSE, warning=FALSE}
 
 spatstat.options(npixel=c(256,256))
 
@@ -722,6 +828,8 @@ ggplot(data=tfa_KD.df, aes(x=x, y=y)) +
   scale_fill_viridis(name="Density") +
   labs(title = "Kernel Density with Three Different Search Radii") +
   mapTheme()
+
+
 ```
 
 ```{r eval=FALSE, warning=FALSE, include=FALSE}
@@ -749,6 +857,8 @@ ggplot(data=tfa_KD.df, aes(x=x, y=y)) +
 
 ```
 
+This map illustrates a sample of 1,500 observed theft from auto incidents from 2018 mapped on top of the 1000-ft kernel density.
+
 ```{r kernel density 2018 thefts, message=FALSE, warning=FALSE}
 
 tfa_KD_ppp <- as.ppp(st_coordinates(theftsFromAuto), W = st_bbox(final_net))
@@ -768,6 +878,9 @@ kden <- as.data.frame(tfa_KD)  %>%
    
 ```
 
+## Comparison of Kernel Density and Risk Predictions
+
+To evaluate the effectiveness of risk predictions compared to kernel density, I bring in the 2019 data for theft from auto incidents, also from opendatadc.gov. Since these incidents are known, it provides an opportunity to look at accuracy of the model's risk predictions compared to more traditional hotspot mapping methods. The two maps below show risk categories for both model types (density mapping and risk prediction) with an overlay of 1,500 sampled 2019 theft from auto incident points. The highest risk category - the yellow color - has a large concentration of incident points. This indicates that the model is relatively strong. However, there are also a few points that sit outside of the highest risk category.
 ```{r read in 2019 thefts from auto data, message=FALSE, warning=FALSE}
 #new goodness of fit indicate to see whether 2018 kernel density or risk prediction captures more of the 2019 burglaries 
 
@@ -777,15 +890,14 @@ theftsFromAuto2019 <-
     mutate(X = as.numeric(LONGITUDE),Y = as.numeric(LATITUDE)) %>% 
     filter(!is.na(X)) %>%
     filter(!is.na(Y)) %>%
-    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant")%>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
     st_transform('ESRI:102685') %>% 
     distinct() %>%
     .[fishnet,]
 
 ```
-## Comparison of Kernel Density and Risk Predictions
 
-```{r}
+```{r message=FALSE, warning=FALSE}
 tfa_KDE_sf <- as.data.frame(tfa_KD) %>%
   st_as_sf(coords = c("x", "y"), crs = st_crs(final_net)) %>%
   aggregate(., final_net, mean) %>%
@@ -802,9 +914,7 @@ tfa_KDE_sf <- as.data.frame(tfa_KD) %>%
       dplyr::select(theftsFromAuto2019) %>% mutate(tfaCount = 1), ., sum) %>%
     mutate(tfaCount = replace_na(tfaCount, 0))) %>%
   dplyr::select(label, Risk_Category, tfaCount)
-```
 
-```{r}
 tfa_risk_sf <-
   reg.ss.spatialCV %>%
   mutate(label = "Risk Predictions",
@@ -822,7 +932,8 @@ tfa_risk_sf <-
   dplyr::select(label, Risk_Category, tfaCount)
 ```
 
-```{r}
+
+```{r kernel density vs risk predictions maps, message=FALSE, warning=FALSE}
 rbind(tfa_KDE_sf, tfa_risk_sf) %>%
   na.omit() %>%
   gather(Variable, Value, -label, -Risk_Category, -geometry) %>%
@@ -835,7 +946,10 @@ rbind(tfa_KDE_sf, tfa_risk_sf) %>%
          subtitle="2018 Thefts from Automobiles - Risk Predictions; 2019 Thefts from Automobiles Overlay") +
     mapTheme()
 ```
-```{r kernel density and risk predcitions histogram, message=FALSE, warning=FALSE}
+
+This final graphic helps to better understand the performance of the risk prediction modeling versus kernel density. In the top three risk categories, the risk prediction model performs better than kernel density. This indicates that the model is well-fit, and its better performance compared to a more traditional crime prediction method used commonly in the public sector shows that the approach may be valuable in police resource allocation decision-making. However, as discussed in the conclusion below, predictive models for addressing crime may not be the most effective approach for a community at large.
+
+```{r kernel density and risk predcitions histogram, message=FALSE, warning=FALSE, results='hide'}
 rbind(tfa_KDE_sf, tfa_risk_sf) %>%
   st_set_geometry(NULL) %>% na.omit() %>%
   gather(Variable, Value, -label, -Risk_Category) %>%
@@ -851,3 +965,8 @@ rbind(tfa_KDE_sf, tfa_risk_sf) %>%
       theme(axis.text.x = element_text(angle = 45, vjust = 0.5))
 ```
 
+# Conclusion
+
+Despite the accuracy and generalizability of the model (especially in neighborhood contexts, due to the slight underprediction in majority non-White areas) I would not recommend using a geospatial risk model in allocating police resources. I think there are other deep-rooted issues in the way that law enforcement practices exist, and I believe that a fundamental restructuring of law enforcement is needed to reevaluate community needs and how they can be addressed without further exacerbating racial and economic divides. 
+
+Through this process, I have learned that geospatial risk modeling can be a useful alternative to hotspot mapping, and iteratively developing a model to incorporate various risk features is a valuable process. However, I think that this type of modeling would be better suited to address other public policy challenges in sectors that do not have similarly deep-rooted issues of systemic bias. In the era of COVID-19, I am interested in leveraging this process to build a model identifying areas at higher risk of exposure, using features like density of multi-family housing units and homeless shelters, to help public agencies determine where to target public health efforts.
